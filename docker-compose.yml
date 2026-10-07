@@ -26,11 +26,11 @@ services:
       DATABASE_URL: postgres://orgflow:${POSTGRES_PASSWORD:-orgflow}@db:5432/orgflow
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-before-real-use-0123456789}
       JWT_EXPIRES_IN: 8h
-      CORS_ORIGIN: http://localhost:8080
+      CORS_ORIGIN: http://localhost:8081
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@orgflow.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin@12345}
       SEED_DEMO: ${SEED_DEMO:-true}
-      APP_URL: http://localhost:8080
+      APP_URL: http://localhost:8081
       SMTP_HOST: ${SMTP_HOST:-mailhog}
       SMTP_PORT: ${SMTP_PORT:-1025}
       SMTP_USER: ${SMTP_USER:-}
