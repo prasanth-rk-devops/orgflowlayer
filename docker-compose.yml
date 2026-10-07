@@ -1,0 +1,59 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: orgflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orgflow}
+      POSTGRES_DB: orgflow
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orgflow -d orgflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgres://orgflow:${POSTGRES_PASSWORD:-orgflow}@db:5432/orgflow
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-before-real-use-0123456789}
+      JWT_EXPIRES_IN: 8h
+      CORS_ORIGIN: http://localhost:8080
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@orgflow.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin@12345}
+      SEED_DEMO: ${SEED_DEMO:-true}
+      APP_URL: http://localhost:8080
+      SMTP_HOST: ${SMTP_HOST:-mailhog}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-OrgFlow <no-reply@orgflow.local>}
+    volumes:
+      - uploads:/app/uploads
+
+  # Local mail catcher: every email OrgFlow sends shows up at http://localhost:8025
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    restart: unless-stopped
+    ports:
+      - "8025:8025"
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  pgdata:
+  uploads:

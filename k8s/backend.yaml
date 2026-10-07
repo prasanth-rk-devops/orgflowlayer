@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: orgflow-uploads
+  namespace: orgflow
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests: { storage: 5Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: orgflow
+spec:
+  # Uploads live on a ReadWriteOnce volume, so keep 1 replica.
+  # To scale out, switch the PVC to ReadWriteMany storage or move uploads to object storage (S3/GCS/Azure Blob).
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: backend }
+  template:
+    metadata:
+      labels: { app: backend }
+    spec:
+      securityContext: { fsGroup: 1000 }
+      containers:
+        - name: backend
+          image: orgflow-backend:1.0.0   # push your built image to a registry and update this
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 4000 }]
+          envFrom:
+            - configMapRef: { name: orgflow-config }
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: orgflow-secrets, key: POSTGRES_PASSWORD } }
+            - name: DATABASE_URL
+              value: "postgres://orgflow:$(POSTGRES_PASSWORD)@postgres:5432/orgflow"
+            - name: JWT_SECRET
+              valueFrom: { secretKeyRef: { name: orgflow-secrets, key: JWT_SECRET } }
+            - name: ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: orgflow-secrets, key: ADMIN_PASSWORD } }
+            - name: SMTP_PASS
+              valueFrom: { secretKeyRef: { name: orgflow-secrets, key: SMTP_PASS } }
+          readinessProbe:
+            httpGet: { path: /api/health, port: 4000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /api/health, port: 4000 }
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          volumeMounts:
+            - { name: uploads, mountPath: /app/uploads }
+      volumes:
+        - name: uploads
+          persistentVolumeClaim: { claimName: orgflow-uploads }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: orgflow
+spec:
+  selector: { app: backend }
+  ports: [{ port: 4000, targetPort: 4000 }]

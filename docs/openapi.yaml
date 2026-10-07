@@ -1,0 +1,130 @@
+openapi: 3.0.3
+info:
+  title: OrgFlow API
+  version: 1.0.0
+  description: Employee and leave management. All routes except login and password reset need a Bearer JWT.
+servers:
+  - url: http://localhost:8080/api
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        details: { type: array, items: { type: object, properties: { field: { type: string }, message: { type: string } } } }
+    LeaveRequest:
+      type: object
+      properties:
+        id: { type: integer }
+        employeeName: { type: string }
+        leaveType: { type: string }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+        days: { type: integer, description: Working days (weekends and company holidays excluded) }
+        status: { type: string, enum: [pending, approved, rejected, cancelled] }
+        attachments: { type: array, items: { type: object, properties: { id: { type: integer }, name: { type: string }, size: { type: integer } } } }
+security:
+  - bearer: []
+paths:
+  /health:
+    get: { summary: Liveness and database check, security: [], responses: { '200': { description: ok }, '503': { description: database unavailable } } }
+  /auth/login:
+    post:
+      summary: Sign in
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string } } } } } }
+      responses: { '200': { description: "{ token, user }" }, '401': { description: Incorrect email or password }, '429': { description: Too many attempts } }
+  /auth/me:
+    get: { summary: Current user, responses: { '200': { description: profile } } }
+  /auth/change-password:
+    post: { summary: Change password; revokes all older sessions and returns a fresh token, responses: { '200': { description: "{ message, token }" } } }
+  /auth/forgot-password:
+    post: { summary: Email a reset link (always answers the same), security: [], responses: { '200': { description: generic confirmation } } }
+  /auth/reset-password:
+    post: { summary: Set a new password with an emailed token (single use, 1 hour), security: [], responses: { '200': { description: updated }, '400': { description: invalid or expired token } } }
+  /employees:
+    get: { summary: List with search, departmentId, status, page, limit (salary visible to admins only), responses: { '200': { description: paged list } } }
+    post: { summary: Create employee, optionally with a login (admin), responses: { '201': { description: created }, '409': { description: duplicate email } } }
+  /employees/export.csv:
+    get: { summary: Download all employees as CSV (admin), responses: { '200': { description: text/csv } } }
+  /employees/import:
+    post:
+      summary: "Bulk-create employees from CSV text (admin). Always 200: check errors[]. Nothing is saved unless errors is empty; dryRun true only validates."
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [csv], properties: { csv: { type: string }, dryRun: { type: boolean } } } } } }
+      responses: { '200': { description: "{ total, valid, created, errors: [{ row, field, message }] }" }, '400': { description: unreadable file or missing columns } }
+  /employees/import-template.csv:
+    get: { summary: CSV template with the expected headings (admin), responses: { '200': { description: text/csv } } }
+  /employees/org-chart:
+    get: { summary: Active people with their manager id (used to draw the org chart; never includes pay), responses: { '200': { description: flat list } } }
+  /employees/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    get: { summary: One employee, responses: { '200': { description: employee } } }
+    put: { summary: Update employee (admin), responses: { '200': { description: updated } } }
+    delete: { summary: Deactivate employee and disable sign-in (admin), responses: { '204': { description: deactivated } } }
+  /departments:
+    get: { summary: List departments with headcount, responses: { '200': { description: list } } }
+    post: { summary: Create (admin), responses: { '201': { description: created } } }
+  /departments/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    put: { summary: Update (admin), responses: { '200': { description: updated } } }
+    delete: { summary: Delete when empty (admin), responses: { '204': { description: deleted }, '409': { description: has employees } } }
+  /holidays:
+    get: { summary: Company holidays, optional year, responses: { '200': { description: list } } }
+    post: { summary: Add a holiday (admin), responses: { '201': { description: created }, '409': { description: date already exists } } }
+  /holidays/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    delete: { summary: Remove a holiday (admin), responses: { '204': { description: removed } } }
+  /leave/types:
+    get: { summary: Leave types, responses: { '200': { description: list } } }
+  /leave/balance:
+    get: { summary: Remaining days per type for the current year, responses: { '200': { description: balances } } }
+  /leave/calendar:
+    get:
+      summary: Approved leave and company holidays for a month
+      parameters: [{ name: month, in: query, schema: { type: string, example: 2026-11 } }]
+      responses: { '200': { description: "{ month, leave[], holidays[] }" } }
+  /leave/export.csv:
+    get:
+      summary: Leave report as CSV (admin)
+      parameters: [{ name: year, in: query, schema: { type: integer } }]
+      responses: { '200': { description: text/csv } }
+  /leave:
+    get:
+      summary: List requests
+      parameters:
+        - { name: scope, in: query, schema: { type: string, enum: [mine, team, all] } }
+        - { name: status, in: query, schema: { type: string } }
+      responses: { '200': { description: list, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/LeaveRequest' } } } } } }
+    post:
+      summary: Request leave (checks overlap, balance, working days)
+      responses: { '201': { description: created }, '409': { description: overlaps an existing request }, '422': { description: insufficient balance } }
+  /leave/{id}/review:
+    patch: { summary: Approve or reject (the employee's manager or an admin; never your own request), parameters: [{ name: id, in: path, required: true, schema: { type: integer } }], responses: { '200': { description: reviewed }, '409': { description: already decided } } }
+  /leave/{id}/cancel:
+    patch: { summary: Cancel your own pending request, parameters: [{ name: id, in: path, required: true, schema: { type: integer } }], responses: { '200': { description: cancelled } } }
+  /leave/{id}/attachments:
+    post: { summary: "Upload PDF/PNG/JPG (max 5 MB, 3 per request), multipart field 'file'", parameters: [{ name: id, in: path, required: true, schema: { type: integer } }], responses: { '201': { description: uploaded }, '413': { description: too large } } }
+  /leave/{id}/attachments/{fileId}:
+    get: { summary: Download (requester, their manager, admin), parameters: [{ name: id, in: path, required: true, schema: { type: integer } }, { name: fileId, in: path, required: true, schema: { type: integer } }], responses: { '200': { description: file } } }
+    delete: { summary: Remove while pending (requester), parameters: [{ name: id, in: path, required: true, schema: { type: integer } }, { name: fileId, in: path, required: true, schema: { type: integer } }], responses: { '204': { description: removed } } }
+  /announcements:
+    get: { summary: Company news, pinned first, parameters: [{ name: limit, in: query, schema: { type: integer } }], responses: { '200': { description: list } } }
+    post: { summary: Publish an announcement (admin), responses: { '201': { description: created } } }
+  /announcements/{id}:
+    parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+    patch: { summary: Pin or unpin (admin), responses: { '200': { description: updated } } }
+    delete: { summary: Delete (admin), responses: { '204': { description: deleted } } }
+  /notifications:
+    get: { summary: Your latest notifications and unread count, parameters: [{ name: limit, in: query, schema: { type: integer } }], responses: { '200': { description: "{ unreadCount, items[] }" } } }
+  /notifications/read-all:
+    post: { summary: Mark all of your notifications as read, responses: { '200': { description: "{ updated }" } } }
+  /notifications/{id}/read:
+    patch: { summary: Mark one of your notifications as read, parameters: [{ name: id, in: path, required: true, schema: { type: integer } }], responses: { '200': { description: ok }, '404': { description: not yours or not found } } }
+  /reports/summary:
+    get: { summary: Leave and workforce analytics for a year (admin), parameters: [{ name: year, in: query, schema: { type: integer } }], responses: { '200': { description: report } } }
+  /dashboard:
+    get: { summary: Headcount, who is out, upcoming leave, pending count, responses: { '200': { description: stats } } }
+  /audit:
+    get: { summary: Latest activity (admin), responses: { '200': { description: entries } } }
